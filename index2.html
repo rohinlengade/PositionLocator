@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <title>My Location Map with Elevation</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+    <!-- Leaflet CSS & JS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+    <style>
+        #map {
+            height: 500px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+
+<h1>Create Route</h1>
+<h4 style="color:gray;">Click on Locate Me, then anywhere on the map</h4>
+<button onclick="getLocation()">Locate Me</button>
+<div id="map"></div>
+
+<script>
+    let map;
+    let userLat, userLon;
+    let secondMarkerPlaced = false;
+
+    function getLocation() {
+        if (!navigator.geolocation) {
+            alert("Geolocation is not supported by your browser");
+            return;
+        }
+
+        navigator.geolocation.getCurrentPosition(
+            (position) => {
+                userLat = position.coords.latitude;
+                userLon = position.coords.longitude;
+                showMap(userLat, userLon);
+            },
+            () => {
+                alert("Unable to retrieve your location");
+            }
+        );
+    }
+
+    function showMap(lat, lon) {
+        map = L.map('map').setView([lat, lon], 15);
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        // Add initial marker with elevation info
+        fetch(`https://api.open-elevation.com/api/v1/lookup?locations=${lat},${lon}`)
+            .then(response => response.json())
+            .then(data => {
+                const elevation = data.results[0].elevation;
+                L.marker([lat, lon]).addTo(map)
+                    .bindPopup(`You are here!<br>Latitude: ${lat.toFixed(5)}<br>Longitude: ${lon.toFixed(5)}<br><b>Elevation: ${elevation} m</b>`)
+                    .openPopup();
+            })
+            .catch(() => {
+                L.marker([lat, lon]).addTo(map)
+                    .bindPopup(`You are here!<br>Latitude: ${lat.toFixed(5)}<br>Longitude: ${lon.toFixed(5)}<br><b>Elevation: N/A</b>`)
+                    .openPopup();
+            });
+
+        // Add routing on click
+        map.on('click', function(e) {
+            if (secondMarkerPlaced) return;
+
+            const clickedLat = e.latlng.lat;
+            const clickedLon = e.latlng.lng;
+
+            L.marker([clickedLat, clickedLon]).addTo(map)
+                .bindPopup(`You clicked here!<br>Latitude: ${clickedLat.toFixed(5)}<br>Longitude: ${clickedLon.toFixed(5)}`)
+                .openPopup();
+
+            // OSRM routing (no key required)
+            const url = `https://router.project-osrm.org/route/v1/foot/${userLon},${userLat};${clickedLon},${clickedLat}?overview=full&geometries=geojson`;
+
+            fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    if (!data.routes || data.routes.length === 0) {
+                        alert('No route found!');
+                        return;
+                    }
+                    const coords = data.routes[0].geometry.coordinates;
+                    const latlngs = coords.map(c => [c[1], c[0]]); // convert to [lat, lon]
+
+                    L.polyline(latlngs, {
+                        color: 'blue',
+                        weight: 4
+                    }).addTo(map);
+                })
+                .catch(error => {
+                    console.error('Routing error:', error);
+                    alert('Unable to draw route with OSRM.');
+                });
+
+            secondMarkerPlaced = true;
+        });
+    }
+</script>
+
+</body>
+</html>
