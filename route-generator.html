@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Cycling Route Generator</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root{
+    --bg:#12181b;
+    --panel:#1a2226;
+    --panel-border:#273034;
+    --text:#e7ecee;
+    --muted:#8fa1a8;
+    --accent:#ff6a3d;      /* route-orange */
+    --accent-dim:#c9502c;
+    --track:#3ee0b0;       /* gpx-track green */
+    --danger:#e05353;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text); }
+  #app { display:flex; height:100vh; width:100vw; }
+
+  #sidebar {
+    width: 340px;
+    min-width: 340px;
+    background: var(--panel);
+    border-right: 1px solid var(--panel-border);
+    padding: 20px;
+    overflow-y: auto;
+  }
+  #map { flex:1; }
+
+  h1 { font-size: 18px; margin: 0 0 4px 0; letter-spacing: 0.2px; }
+  .sub { color: var(--muted); font-size: 12.5px; margin: 0 0 20px 0; line-height:1.4; }
+
+  .field { margin-bottom: 16px; }
+  label { display:block; font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); margin-bottom: 6px; }
+  select, input[type="text"], input[type="password"], input[type="number"] {
+    width: 100%;
+    background: #0f1517;
+    border: 1px solid var(--panel-border);
+    color: var(--text);
+    padding: 9px 10px;
+    border-radius: 6px;
+    font-size: 14px;
+  }
+  select:focus, input:focus { outline: 2px solid var(--accent-dim); }
+
+  .btn {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 6px;
+    border: none;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-bottom: 10px;
+    transition: filter 0.15s ease;
+  }
+  .btn:hover { filter: brightness(1.1); }
+  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-primary { background: var(--accent); color: #1a0e08; }
+  .btn-secondary { background: #263136; color: var(--text); }
+  .btn-outline { background: transparent; border: 1px solid var(--panel-border); color: var(--text); }
+
+  #instructions {
+    background: #0f1517;
+    border: 1px solid var(--panel-border);
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 13px;
+    color: var(--muted);
+    margin-bottom: 18px;
+    line-height: 1.45;
+  }
+
+  #stats {
+    display: none;
+    background: #0f1517;
+    border: 1px solid var(--panel-border);
+    border-radius: 8px;
+    padding: 14px;
+    margin-bottom: 16px;
+  }
+  #stats.visible { display: block; }
+  .stat-row { display:flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #1f2a2e; font-size: 13.5px; }
+  .stat-row:last-child { border-bottom: none; }
+  .stat-label { color: var(--muted); }
+  .stat-value { font-weight: 600; }
+
+  #error {
+    display:none;
+    background: #2a1414;
+    border: 1px solid var(--danger);
+    color: #ffb3b3;
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 13px;
+    margin-bottom: 16px;
+  }
+  #error.visible { display: block; }
+
+  .divider { border-top: 1px solid var(--panel-border); margin: 18px 0; }
+
+  .small-note { font-size: 11.5px; color: var(--muted); margin-top: 6px; line-height: 1.4; }
+  a.link { color: var(--accent); text-decoration: none; }
+  a.link:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="sidebar">
+    <h1>🚴 Route Generator</h1>
+    <p class="sub">Click points on the map to build a bike route, then export it as a GPX file for your bike computer.</p>
+
+    <div class="field">
+      <label for="routeType">Route type</label>
+      <select id="routeType">
+        <option value="oneway">One-way</option>
+        <option value="outback">Out-and-back</option>
+        <option value="loop">Loop (start = end)</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="profile">Bike profile</label>
+      <select id="profile">
+        <option value="cycling-regular">Regular / hybrid bike</option>
+        <option value="cycling-road">Road bike</option>
+        <option value="cycling-mountain">Mountain bike</option>
+      </select>
+    </div>
+
+    <div class="field" id="loopDistanceField" style="display:none;">
+      <label for="loopDistance">Target loop distance (km)</label>
+      <input type="number" id="loopDistance" min="1" max="100" value="30" />
+      <div class="small-note">ORS generates a loop close to this distance — expect some variance. Max ~100 km.</div>
+    </div>
+
+    <div id="instructions"></div>
+
+    <button class="btn btn-secondary" id="locateBtn">📍 Use my location</button>
+    <button class="btn btn-primary" id="generateBtn" disabled>Generate route</button>
+    <button class="btn btn-outline" id="regenBtn" style="display:none;">🔀 Try another loop</button>
+    <button class="btn btn-outline" id="clearBtn">Clear points</button>
+
+    <div id="error"></div>
+
+    <div id="stats">
+      <div class="stat-row"><span class="stat-label">Distance</span><span class="stat-value" id="statDistance">–</span></div>
+      <div class="stat-row"><span class="stat-label">Elevation gain</span><span class="stat-value" id="statGain">–</span></div>
+      <div class="stat-row"><span class="stat-label">Elevation loss</span><span class="stat-value" id="statLoss">–</span></div>
+      <div class="stat-row"><span class="stat-label">Est. moving time</span><span class="stat-value" id="statTime">–</span></div>
+    </div>
+
+    <button class="btn btn-primary" id="downloadBtn" disabled>⬇ Download GPX</button>
+
+    <div class="divider"></div>
+    <div class="small-note">
+      Routing &amp; elevation data via OpenRouteService (built on OpenStreetMap). Loop generation is heuristic — regenerate for alternates.
+    </div>
+  </div>
+  <div id="map"></div>
+</div>
+
+<script>
+// ---------- Map setup ----------
+const map = L.map('map', { zoomControl: true }).setView([34.0522, -118.2437], 12); // default: LA
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '&copy; OpenStreetMap contributors',
+  maxZoom: 19
+}).addTo(map);
+
+let clickMarkers = [];      // user-placed markers (start / end / turnaround)
+let routeLayer = null;      // drawn polyline
+let lastRouteCoords = null; // [[lon,lat,ele], ...] for the CURRENT full route (already doubled for out-and-back)
+let lastRoundTripSeed = Math.floor(Math.random() * 100000);
+
+const ORS_API_KEY = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjU5MWM3NmI3MDliNDQ1MmM4NTk3ZWNlY2Y2YzI3MGUzIiwiaCI6Im11cm11cjY0In0=';
+
+const els = {
+  routeType: document.getElementById('routeType'),
+  profile: document.getElementById('profile'),
+  loopDistanceField: document.getElementById('loopDistanceField'),
+  loopDistance: document.getElementById('loopDistance'),
+  instructions: document.getElementById('instructions'),
+  locateBtn: document.getElementById('locateBtn'),
+  generateBtn: document.getElementById('generateBtn'),
+  regenBtn: document.getElementById('regenBtn'),
+  clearBtn: document.getElementById('clearBtn'),
+  errorBox: document.getElementById('error'),
+  stats: document.getElementById('stats'),
+  statDistance: document.getElementById('statDistance'),
+  statGain: document.getElementById('statGain'),
+  statLoss: document.getElementById('statLoss'),
+  statTime: document.getElementById('statTime'),
+  downloadBtn: document.getElementById('downloadBtn'),
+};
+
+function updateInstructions() {
+  const type = els.routeType.value;
+  els.loopDistanceField.style.display = type === 'loop' ? 'block' : 'none';
+  els.regenBtn.style.display = type === 'loop' ? 'inline-block' : 'none';
+
+  if (type === 'oneway') {
+    els.instructions.textContent = 'Click a start point, then as many via points as you like, then an end point. The route regenerates after each click — click Clear points to start over.';
+  } else if (type === 'outback') {
+    els.instructions.textContent = 'Click a start point, then as many via points as you like, then a turnaround point. The route retraces the same path back to start.';
+  } else {
+    els.instructions.textContent = 'Click one point as your start/finish, set a target distance, then click Generate route.';
+  }
+}
+updateInstructions();
+els.routeType.addEventListener('change', () => { clearAll(); updateInstructions(); });
+
+function showError(msg) {
+  els.errorBox.textContent = msg;
+  els.errorBox.classList.add('visible');
+}
+function clearError() {
+  els.errorBox.classList.remove('visible');
+  els.errorBox.textContent = '';
+}
+
+// ---------- Map interaction ----------
+function relabelMarkers() {
+  const type = els.routeType.value;
+  const endLabel = type === 'outback' ? 'Turnaround' : 'End';
+
+  clickMarkers.forEach((m, i) => {
+    let label;
+    if (i === 0) label = 'Start';
+    else if (i === clickMarkers.length - 1) label = endLabel;
+    else label = `Via ${i}`;
+
+    if (m.getPopup()) m.setPopupContent(label);
+    else m.bindPopup(label);
+  });
+
+  const last = clickMarkers[clickMarkers.length - 1];
+  if (last) last.openPopup();
+}
+
+map.on('click', (e) => {
+  const type = els.routeType.value;
+
+  if (type === 'loop') {
+    if (clickMarkers.length >= 1) return; // ignore extra clicks; user must Clear first
+    const marker = L.marker(e.latlng, { title: 'Start' }).addTo(map).bindPopup('Start').openPopup();
+    clickMarkers.push(marker);
+    els.generateBtn.disabled = false;
+    return;
+  }
+
+  // one-way / out-and-back: unlimited via points between start and end/turnaround
+  const marker = L.marker(e.latlng).addTo(map);
+  clickMarkers.push(marker);
+  relabelMarkers();
+
+  els.generateBtn.disabled = clickMarkers.length < 2;
+  if (clickMarkers.length >= 2) generateRoute(); // auto-regenerate as points are added
+});
+
+els.locateBtn.addEventListener('click', () => {
+  if (!navigator.geolocation) { showError('Geolocation not supported in this browser.'); return; }
+  navigator.geolocation.getCurrentPosition(
+    (pos) => {
+      const { latitude, longitude } = pos.coords;
+      map.setView([latitude, longitude], 14);
+    },
+    () => showError('Could not get your location — check browser permissions.')
+  );
+});
+
+els.clearBtn.addEventListener('click', clearAll);
+
+function clearAll() {
+  clickMarkers.forEach(m => map.removeLayer(m));
+  clickMarkers = [];
+  if (routeLayer) { map.removeLayer(routeLayer); routeLayer = null; }
+  lastRouteCoords = null;
+  els.generateBtn.disabled = true;
+  els.downloadBtn.disabled = true;
+  els.stats.classList.remove('visible');
+  clearError();
+}
+
+els.generateBtn.addEventListener('click', generateRoute);
+els.regenBtn.addEventListener('click', () => {
+  lastRoundTripSeed = Math.floor(Math.random() * 100000);
+  generateRoute();
+});
+
+// ---------- Routing ----------
+async function callORS(coordinates, profile, extraOptions) {
+  const body = { coordinates, elevation: true };
+  if (extraOptions) body.options = extraOptions;
+
+  const res = await fetch(`https://api.openrouteservice.org/v2/directions/${profile}/geojson`, {
+    method: 'POST',
+    headers: {
+      'Authorization': ORS_API_KEY,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!res.ok) {
+    const errText = await res.text().catch(() => '');
+    throw new Error(`ORS request failed (${res.status}). ${errText.slice(0, 200)}`);
+  }
+  return res.json();
+}
+
+function computeElevationStats(coords) {
+  // coords: [[lon,lat,ele], ...]
+  let gain = 0, loss = 0;
+  for (let i = 1; i < coords.length; i++) {
+    const d = coords[i][2] - coords[i - 1][2];
+    if (d > 0) gain += d; else loss += Math.abs(d);
+  }
+  return { gain, loss };
+}
+
+function haversineDistanceMeters(coords) {
+  const R = 6371000;
+  let total = 0;
+  for (let i = 1; i < coords.length; i++) {
+    const [lon1, lat1] = coords[i - 1];
+    const [lon2, lat2] = coords[i];
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat / 2) ** 2 +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2;
+    total += R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  }
+  return total;
+}
+
+async function generateRoute() {
+  clearError();
+  const type = els.routeType.value;
+  const profile = els.profile.value;
+
+  try {
+    els.generateBtn.disabled = true;
+    els.generateBtn.textContent = 'Generating…';
+
+    let finalCoords; // [[lon,lat,ele], ...] representing the FULL route to render + export
+    let summaryDistance, summaryDuration;
+
+    if (type === 'oneway') {
+      const waypoints = clickMarkers.map(m => [m.getLatLng().lng, m.getLatLng().lat]);
+      const data = await callORS(waypoints, profile);
+      const feature = data.features[0];
+      finalCoords = feature.geometry.coordinates;
+      summaryDistance = feature.properties.summary.distance;
+      summaryDuration = feature.properties.summary.duration;
+
+    } else if (type === 'outback') {
+      const waypoints = clickMarkers.map(m => [m.getLatLng().lng, m.getLatLng().lat]);
+      const data = await callORS(waypoints, profile);
+      const feature = data.features[0];
+      const outCoords = feature.geometry.coordinates;
+      const backCoords = [...outCoords].reverse().slice(1); // drop duplicate turnaround point
+      finalCoords = outCoords.concat(backCoords);
+      summaryDistance = feature.properties.summary.distance * 2;
+      summaryDuration = feature.properties.summary.duration * 2;
+
+    } else { // loop
+      const [start] = clickMarkers.map(m => [m.getLatLng().lng, m.getLatLng().lat]);
+      const lengthMeters = Math.max(1, Number(els.loopDistance.value)) * 1000;
+      const data = await callORS([start], profile, {
+        round_trip: { length: lengthMeters, points: 4, seed: lastRoundTripSeed }
+      });
+      const feature = data.features[0];
+      finalCoords = feature.geometry.coordinates;
+      summaryDistance = feature.properties.summary.distance;
+      summaryDuration = feature.properties.summary.duration;
+    }
+
+    // Fallback distance calc if summary missing (defensive)
+    if (!summaryDistance) summaryDistance = haversineDistanceMeters(finalCoords);
+
+    lastRouteCoords = finalCoords;
+    drawRoute(finalCoords);
+
+    const { gain, loss } = computeElevationStats(finalCoords);
+    els.statDistance.textContent = (summaryDistance / 1000).toFixed(1) + ' km';
+    els.statGain.textContent = Math.round(gain) + ' m';
+    els.statLoss.textContent = Math.round(loss) + ' m';
+    const mins = Math.round((summaryDuration || 0) / 60);
+    els.statTime.textContent = mins > 0 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : '–';
+    els.stats.classList.add('visible');
+    els.downloadBtn.disabled = false;
+
+  } catch (err) {
+    console.error(err);
+    showError(err.message || 'Something went wrong generating the route.');
+  } finally {
+    els.generateBtn.textContent = 'Generate route';
+    els.generateBtn.disabled = false;
+  }
+}
+
+function drawRoute(coords) {
+  if (routeLayer) map.removeLayer(routeLayer);
+  const latlngs = coords.map(c => [c[1], c[0]]);
+  routeLayer = L.polyline(latlngs, { color: getComputedStyle(document.documentElement).getPropertyValue('--track').trim() || '#3ee0b0', weight: 4 }).addTo(map);
+  map.fitBounds(routeLayer.getBounds(), { padding: [30, 30] });
+}
+
+// ---------- GPX export ----------
+function buildGPX(coords, routeName) {
+  const points = coords.map(c => {
+    const [lon, lat, ele] = c;
+    return `      <trkpt lat="${lat}" lon="${lon}">${ele !== undefined ? `<ele>${ele}</ele>` : ''}</trkpt>`;
+  }).join('\n');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="RouteGenerator" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>${routeName}</name>
+    <time>${new Date().toISOString()}</time>
+  </metadata>
+  <trk>
+    <name>${routeName}</name>
+    <trkseg>
+${points}
+    </trkseg>
+  </trk>
+</gpx>`;
+}
+
+els.downloadBtn.addEventListener('click', () => {
+  if (!lastRouteCoords) return;
+  const type = els.routeType.value;
+  const name = `Route_${type}_${new Date().toISOString().slice(0, 10)}`;
+  const gpx = buildGPX(lastRouteCoords, name);
+  const blob = new Blob([gpx], { type: 'application/gpx+xml' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${name}.gpx`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+});
+</script>
+</body>
+</html>
