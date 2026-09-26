@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Cycling Route Generator</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="config.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <style>
   :root{
@@ -179,7 +180,7 @@ let routeLayer = null;      // drawn polyline
 let lastRouteCoords = null; // [[lon,lat,ele], ...] for the CURRENT full route (already doubled for out-and-back)
 let lastRoundTripSeed = Math.floor(Math.random() * 100000);
 
-const ORS_API_KEY = 'eyJvcmciOiI1YjNjZTM1OTc4NTExMTAwMDFjZjYyNDgiLCJpZCI6IjU5MWM3NmI3MDliNDQ1MmM4NTk3ZWNlY2Y2YzI3MGUzIiwiaCI6Im11cm11cjY0In0=';
+const ORS_API_KEY = window.APP_CONFIG.orsKey;
 
 const els = {
   routeType: document.getElementById('routeType'),

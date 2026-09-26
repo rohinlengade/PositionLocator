@@ -1,0 +1,1 @@
+window.APP_CONFIG = { orsKey: "${ORS_API_KEY}" };
